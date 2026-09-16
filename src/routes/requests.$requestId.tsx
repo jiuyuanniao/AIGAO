@@ -5,6 +5,7 @@ import { ApplicationStatusBadge, Pill, RequestStatusBadge } from "@/components/s
 import { applicationsByRequest, formatCNY, getCreator, getRequest } from "@/lib/data";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { actionErrorMessage } from "@/lib/action-errors";
 import type { CreatorRequest, ApplicationStatus } from "@/lib/types";
 
 type DbRequest = {
@@ -83,6 +84,7 @@ function RequestDetailPage() {
   const [apps, setApps] = useState<DbApplication[]>([]);
   const [myCreatorId, setMyCreatorId] = useState<string | null>(null);
   const [loading, setLoading] = useState(!local);
+  const [loadError, setLoadError] = useState("");
   const [quote, setQuote] = useState("");
   const [days, setDays] = useState("");
   const [proposal, setProposal] = useState("");
@@ -97,21 +99,29 @@ function RequestDetailPage() {
   const isOwner = !!user && dbRequest?.client_id === user.id;
 
   async function loadReal() {
+    setLoadError("");
     const requestResult = await supabase
       .from("requests")
       .select("id,client_id,title,category,type,description,budget_min,budget_max,deadline,created_at,status,commercial_use,special_requirements,attachments")
       .eq("id", requestId)
       .single();
 
-    if (requestResult.data) {
-      const row = requestResult.data as DbRequest;
-      setDbRequest(row);
-      setRequest(normalize(row));
+    if (requestResult.error || !requestResult.data) {
+      setLoadError("需求不存在，或当前账号没有权限查看。");
+      setRequest(undefined);
+      setLoading(false);
+      return;
     }
+
+    const row = requestResult.data as DbRequest;
+    setDbRequest(row);
+    setRequest(normalize(row));
 
     if (user) {
       const creatorResult = await supabase.from("creator_profiles").select("id").eq("user_id", user.id).maybeSingle();
       setMyCreatorId(creatorResult.data?.id ?? null);
+    } else {
+      setMyCreatorId(null);
     }
 
     const appResult = await supabase
@@ -135,6 +145,8 @@ function RequestDetailPage() {
         }),
       );
       setApps(enriched);
+    } else {
+      setApps([]);
     }
 
     setLoading(false);
@@ -153,6 +165,11 @@ function RequestDetailPage() {
       navigate({ to: "/creator/onboarding" });
       return;
     }
+    if (request?.status !== "recruiting") {
+      setMessage("这条需求已经结束招募。");
+      return;
+    }
+
     setWorking(true);
     setMessage("");
     const { error } = await supabase.from("applications").insert({
@@ -167,9 +184,46 @@ function RequestDetailPage() {
       manual_retouch: retouch,
       status: "submitted",
     });
-    if (error) setMessage("应征失败：" + error.message);
-    else {
+
+    if (error) {
+      setMessage(actionErrorMessage(error, "应征提交失败，请稍后重试。"));
+    } else {
       setMessage("应征已提交，等待需求方选择。");
+      setQuote("");
+      setDays("");
+      setProposal("");
+      await loadReal();
+    }
+    setWorking(false);
+  }
+
+  async function withdrawApplication(applicationId: string) {
+    if (!window.confirm("确定撤回这次应征吗？撤回后，在需求仍招募时可以重新应征。")) return;
+    setWorking(true);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("applications")
+      .update({ status: "withdrawn", updated_at: new Date().toISOString() })
+      .eq("id", applicationId);
+
+    if (error) setMessage(actionErrorMessage(error, "撤回应征失败，请稍后重试。"));
+    else {
+      setMessage("应征已撤回。");
+      await loadReal();
+    }
+    setWorking(false);
+  }
+
+  async function cancelRequest() {
+    if (!window.confirm("确定取消这条需求吗？未选中的有效应征也会同时失效。")) return;
+    setWorking(true);
+    setMessage("");
+
+    const { error } = await supabase.rpc("cancel_request", { p_request_id: requestId });
+    if (error) setMessage(actionErrorMessage(error, "取消需求失败，请稍后重试。"));
+    else {
+      setMessage("需求已取消。");
       await loadReal();
     }
     setWorking(false);
@@ -183,7 +237,7 @@ function RequestDetailPage() {
       p_application_id: applicationId,
     });
     if (error) {
-      setMessage("选择失败：" + error.message);
+      setMessage(actionErrorMessage(error, "选择合作失败，请稍后重试。"));
     } else if (data) {
       navigate({ to: "/orders/$orderId", params: { orderId: data as string } });
     }
@@ -191,19 +245,47 @@ function RequestDetailPage() {
   }
 
   if (loading) return <div className="container-page py-20 text-center text-sm text-muted-foreground">正在加载需求…</div>;
-  if (!request) return <div className="container-page py-20 text-center">需求不存在或已关闭。</div>;
+  if (!request) {
+    return (
+      <div className="container-page py-20">
+        <div className="card-surface mx-auto max-w-lg p-8 text-center">
+          <h1 className="font-display text-2xl font-semibold">没有找到这条需求</h1>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">{loadError || "需求可能已经关闭或不存在。"}</p>
+          <Button className="mt-5" variant="outline" asChild><Link to="/requests">返回需求大厅</Link></Button>
+        </div>
+      </div>
+    );
+  }
 
   const mockApps = local ? applicationsByRequest(request.id) : [];
+  const myApps = myCreatorId ? apps.filter((app) => app.creator_id === myCreatorId) : [];
+  const activeMyApp = myApps.find((app) => app.status === "submitted" || app.status === "selected");
+  const latestMyApp = myApps.length ? myApps[myApps.length - 1] : undefined;
+  const ownerCanManage = isReal && isOwner && (request.status === "draft" || request.status === "recruiting");
 
   return (
-    <div className="container-page py-10">
+    <div className="container-page py-8 sm:py-10">
       <div className="grid gap-8 lg:grid-cols-[1fr_340px]">
         <div>
-          <div className="flex flex-wrap items-center gap-2"><RequestStatusBadge status={request.status} /><Pill tone="muted">{request.category}</Pill></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <RequestStatusBadge status={request.status} />
+            <Pill tone="muted">{request.category}</Pill>
+          </div>
           <h1 className="mt-4 font-display text-3xl font-semibold">{request.title}</h1>
           <div className="mt-3 text-sm text-muted-foreground">预算 {formatCNY(request.budget_min)}–{request.budget_max.toLocaleString("zh-CN")} · 截止 {request.deadline}</div>
 
-          <section className="mt-8 card-surface p-6">
+          {ownerCanManage ? (
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              <Button variant="outline" className="w-full sm:w-auto" asChild>
+                <Link to="/requests/$requestId/edit" params={{ requestId }}>编辑需求</Link>
+              </Button>
+              <Button variant="destructive" className="w-full sm:w-auto" disabled={working} onClick={cancelRequest}>取消需求</Button>
+            </div>
+          ) : null}
+
+          {message ? <div className="mt-5 rounded-xl bg-secondary p-3 text-sm leading-6 text-muted-foreground">{message}</div> : null}
+
+          <section className="mt-8 card-surface p-5 sm:p-6">
             <h2 className="font-medium">需求说明</h2>
             <p className="mt-3 leading-7 text-muted-foreground">{request.description}</p>
             {request.deliverables.length ? (
@@ -218,13 +300,13 @@ function RequestDetailPage() {
             <h2 className="font-display text-2xl font-semibold">收到的应征</h2>
             <div className="mt-5 space-y-4">
               {isReal ? apps.map((a) => (
-                <div key={a.id} className="card-surface p-5">
+                <div key={a.id} className="card-surface p-4 sm:p-5">
                   <div className="flex flex-col gap-4 md:flex-row md:items-start">
-                    <div className="size-12 overflow-hidden rounded-full bg-secondary">
+                    <div className="size-12 shrink-0 overflow-hidden rounded-full bg-secondary">
                       {a.creator_avatar ? <img src={a.creator_avatar} alt="" className="size-full object-cover" /> : null}
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2"><span className="font-medium">{a.creator_name ?? "AI 创作者"}</span><ApplicationStatusBadge status={a.status} /></div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{a.creator_name ?? "AI 创作者"}</span><ApplicationStatusBadge status={a.status} /></div>
                       {a.creator_headline ? <div className="mt-1 text-xs text-muted-foreground">{a.creator_headline}</div> : null}
                       <div className="mt-2 text-sm text-muted-foreground">报价 {formatCNY(Number(a.quote_price))} · {a.delivery_days} 天交付 · {a.revision_count} 次修改</div>
                       <p className="mt-3 text-sm leading-6">{a.proposal}</p>
@@ -235,7 +317,7 @@ function RequestDetailPage() {
                       </div>
                     </div>
                     {isOwner && request.status === "recruiting" && a.status === "submitted" ? (
-                      <Button disabled={working} onClick={() => selectCreator(a.id)}>选择合作</Button>
+                      <Button className="w-full md:w-auto" disabled={working} onClick={() => selectCreator(a.id)}>选择合作</Button>
                     ) : null}
                   </div>
                 </div>
@@ -250,41 +332,70 @@ function RequestDetailPage() {
                   </div>
                 );
               })}
-              {(isReal ? apps.length === 0 : mockApps.length === 0) ? <div className="card-surface p-8 text-center text-sm text-muted-foreground">暂时还没有应征。</div> : null}
+              {(isReal ? apps.length === 0 : mockApps.length === 0) ? <div className="card-surface p-8 text-center text-sm text-muted-foreground">暂时还没有应征。需求发布后，创作者的应征会出现在这里。</div> : null}
             </div>
           </section>
         </div>
 
         <aside>
-          <div className="card-surface sticky top-24 p-5">
+          <div className="card-surface lg:sticky lg:top-24 p-5">
             {isReal && isOwner ? (
               <>
                 <div className="font-medium">需求管理</div>
-                <p className="mt-3 text-sm leading-6 text-muted-foreground">这里会展示所有有效应征。选择一名创作者后，系统会锁定报价、周期与修改次数并生成订单。</p>
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                  {request.status === "recruiting"
+                    ? "查看应征并选择合作。选定创作者后，报价、周期和修改次数会写入订单快照。"
+                    : request.status === "draft"
+                      ? "这条需求还是草稿，可以继续编辑后再发布。"
+                      : request.status === "cancelled"
+                        ? "这条需求已经取消，不再接受应征。"
+                        : "需求已经进入合作流程，内容已锁定。"}
+                </p>
+                {ownerCanManage ? (
+                  <div className="mt-4 grid gap-2">
+                    <Button variant="outline" asChild><Link to="/requests/$requestId/edit" params={{ requestId }}>编辑需求</Link></Button>
+                    <Button variant="destructive" disabled={working} onClick={cancelRequest}>取消需求</Button>
+                  </div>
+                ) : null}
               </>
             ) : (
               <>
                 <div className="font-medium">我要应征</div>
-                {!user ? <p className="mt-3 text-sm text-muted-foreground">登录后才能应征。</p> : !myCreatorId && isReal ? (
+                {!user ? (
+                  <div className="mt-3">
+                    <p className="text-sm text-muted-foreground">登录并开通创作者身份后才能应征。</p>
+                    <Button asChild className="mt-3 w-full"><Link to="/auth">登录 / 注册</Link></Button>
+                  </div>
+                ) : !myCreatorId && isReal ? (
                   <div className="mt-3">
                     <p className="text-sm leading-6 text-muted-foreground">你还没有创作者身份，先建立公开主页即可开始接单。</p>
                     <Button asChild className="mt-3 w-full"><Link to="/creator/onboarding">成为创作者</Link></Button>
                   </div>
+                ) : request.status !== "recruiting" ? (
+                  <p className="mt-3 text-sm leading-6 text-muted-foreground">这条需求已经结束招募，暂时不能再提交应征。</p>
+                ) : activeMyApp ? (
+                  <div className="mt-4">
+                    <ApplicationStatusBadge status={activeMyApp.status} />
+                    <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                      {activeMyApp.status === "submitted" ? "应征已经提交，需求方选择合作前可以撤回。" : "你的应征已被选中，请前往订单继续合作。"}
+                    </p>
+                    {activeMyApp.status === "submitted" ? <Button variant="outline" className="mt-3 w-full" disabled={working} onClick={() => withdrawApplication(activeMyApp.id)}>撤回应征</Button> : null}
+                  </div>
                 ) : (
                   <div className="mt-4 space-y-3">
-                    <input value={quote} onChange={(e) => setQuote(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" placeholder="报价金额" type="number" />
-                    <input value={days} onChange={(e) => setDays(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" placeholder="交付天数" type="number" />
-                    <input value={revisions} onChange={(e) => setRevisions(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" placeholder="包含修改次数" type="number" />
+                    {latestMyApp?.status === "withdrawn" ? <div className="rounded-lg bg-secondary p-3 text-xs text-muted-foreground">你之前撤回过一次应征，可以重新提交新的报价与方案。</div> : null}
+                    <input value={quote} onChange={(e) => setQuote(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" placeholder="报价金额" type="number" min="0" />
+                    <input value={days} onChange={(e) => setDays(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" placeholder="交付天数" type="number" min="1" />
+                    <input value={revisions} onChange={(e) => setRevisions(e.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" placeholder="包含修改次数" type="number" min="0" />
                     <textarea value={proposal} onChange={(e) => setProposal(e.target.value)} className="min-h-28 w-full rounded-lg border border-input bg-background p-3 text-sm" placeholder="简单说说你的制作方案和相关经验" />
                     <label className="block text-xs"><input type="checkbox" checked={commercial} onChange={(e) => setCommercial(e.target.checked)} className="mr-2" />支持商用</label>
                     <label className="block text-xs"><input type="checkbox" checked={retouch} onChange={(e) => setRetouch(e.target.checked)} className="mr-2" />包含人工精修</label>
                     <label className="block text-xs"><input type="checkbox" checked={sourceFile} onChange={(e) => setSourceFile(e.target.checked)} className="mr-2" />提供源文件</label>
-                    <Button className="w-full" disabled={working || !quote || !days || !proposal} onClick={submitApplication}>{working ? "提交中…" : "提交应征"}</Button>
+                    <Button className="w-full" disabled={working || !quote || !days || !proposal.trim()} onClick={submitApplication}>{working ? "提交中…" : "提交应征"}</Button>
                   </div>
                 )}
               </>
             )}
-            {message ? <div className="mt-4 rounded-xl bg-secondary p-3 text-xs leading-5 text-muted-foreground">{message}</div> : null}
           </div>
         </aside>
       </div>
