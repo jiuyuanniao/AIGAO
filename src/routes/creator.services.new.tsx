@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
 import { CATEGORIES } from "@/lib/data";
 import { cn } from "@/lib/utils";
+import { actionErrorMessage } from "@/lib/action-errors";
 
 export const Route = createFileRoute("/creator/services/new")({ component: NewServicePage });
 
@@ -76,7 +77,7 @@ function NewServicePage() {
 
       navigate({ to: "/me" });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "发布失败");
+      setMessage(actionErrorMessage(error, "发布失败，请稍后重试。"));
     } finally {
       setSaving(false);
     }
@@ -87,7 +88,7 @@ function NewServicePage() {
   }
 
   return (
-    <div className="container-page py-10">
+    <div className="container-page py-8 sm:py-10">
       <form className="mx-auto max-w-3xl space-y-5" onSubmit={submit}>
         <div>
           <h1 className="font-display text-3xl font-semibold">发布新服务</h1>
@@ -102,7 +103,7 @@ function NewServicePage() {
         </Block>
 
         <Block title="价格与交付">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
             <Input type="number" min="0" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="起价" required />
             <Input type="number" min="1" value={days} onChange={(e) => setDays(e.target.value)} placeholder="交付天数" required />
             <Input value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="5 张 / 15s" required />
@@ -115,7 +116,7 @@ function NewServicePage() {
         </Block>
 
         <Block title="交付权限">
-          <div className="flex flex-wrap gap-5 text-sm">
+          <div className="flex flex-col gap-3 text-sm sm:flex-row sm:flex-wrap sm:gap-5">
             <label><input type="checkbox" className="mr-2" checked={commercial} onChange={(e) => setCommercial(e.target.checked)} />支持商用</label>
             <label><input type="checkbox" className="mr-2" checked={retouch} onChange={(e) => setRetouch(e.target.checked)} />人工精修</label>
             <label>源文件
@@ -132,12 +133,12 @@ function NewServicePage() {
 
         {message ? <div className="rounded-xl bg-secondary p-3 text-sm text-muted-foreground">{message}</div> : null}
 
-        <div className="flex justify-end"><Button disabled={saving}>{saving ? "发布中…" : "发布服务"}</Button></div>
+        <div className="flex justify-end"><Button className="w-full sm:w-auto" disabled={saving}>{saving ? "发布中…" : "发布服务"}</Button></div>
       </form>
     </div>
   );
 }
 
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="card-surface p-5"><div className="mb-3 text-sm font-medium">{title}</div>{children}</section>;
+  return <section className="card-surface p-4 sm:p-5"><div className="mb-3 text-sm font-medium">{title}</div>{children}</section>;
 }
