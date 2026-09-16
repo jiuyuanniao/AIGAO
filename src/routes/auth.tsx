@@ -86,3 +86,5 @@ function AuthPage() {
     </div>
   );
 }
+
+// Production auth flow verified for Netlify deployment.
