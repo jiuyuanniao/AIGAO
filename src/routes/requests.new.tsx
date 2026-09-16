@@ -6,6 +6,7 @@ import { CATEGORIES } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { actionErrorMessage } from "@/lib/action-errors";
 
 export const Route = createFileRoute("/requests/new")({ component: NewRequestPage });
 
@@ -38,6 +39,14 @@ function NewRequestPage() {
 
   async function submit(status: "draft" | "recruiting") {
     if (!user) return;
+    if (!title.trim() || !description.trim() || !budgetMin || !budgetMax || !deadline) {
+      setMessage("请把必填内容填写完整。");
+      return;
+    }
+    if (Number(budgetMin) > Number(budgetMax)) {
+      setMessage("最低预算不能高于最高预算。");
+      return;
+    }
     setSubmitting(true);
     setMessage("");
 
@@ -60,7 +69,7 @@ function NewRequestPage() {
       .single();
 
     if (error) {
-      setMessage("提交失败：" + error.message);
+      setMessage(actionErrorMessage(error, "提交失败，请稍后重试。"));
       setSubmitting(false);
       return;
     }
@@ -73,7 +82,7 @@ function NewRequestPage() {
   }
 
   return (
-    <div className="container-page py-10">
+    <div className="container-page py-8 sm:py-10">
       <div className="max-w-3xl">
         <h1 className="font-display text-3xl font-semibold">发布需求</h1>
         <p className="mt-2 text-sm text-muted-foreground">把交付目标说清楚，让合适的 AI 创作者来找你。</p>
@@ -90,7 +99,7 @@ function NewRequestPage() {
           </Field>
 
           <Field title="需求类型" required>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {["AI图片", "AI视频", "AI设计"].map((x) => (
                 <button key={x} type="button" onClick={() => setType(x)} className={cn("rounded-full px-4 py-2 text-sm", type === x ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground")}>
                   {x}
@@ -138,9 +147,9 @@ function NewRequestPage() {
 
           {message ? <div className="rounded-xl bg-secondary p-3 text-sm text-muted-foreground">{message}</div> : null}
 
-          <div className="flex justify-end gap-2 border-t border-border pt-6">
-            <Button type="button" variant="outline" disabled={submitting} onClick={() => submit("draft")}>保存草稿</Button>
-            <Button type="submit" disabled={submitting}>{submitting ? "提交中…" : "立即发布"}</Button>
+          <div className="flex flex-col-reverse gap-2 border-t border-border pt-6 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" disabled={submitting} onClick={() => submit("draft")}>保存草稿</Button>
+            <Button type="submit" className="w-full sm:w-auto" disabled={submitting}>{submitting ? "提交中…" : "立即发布"}</Button>
           </div>
         </form>
       </div>
@@ -149,5 +158,5 @@ function NewRequestPage() {
 }
 
 function Field({ title, required, children }: { title: string; required?: boolean; children: React.ReactNode }) {
-  return <div className="card-surface p-5"><div className="mb-3 text-sm font-medium">{title}{required ? <span className="ml-1 text-clay">*</span> : null}</div>{children}</div>;
+  return <div className="card-surface p-4 sm:p-5"><div className="mb-3 text-sm font-medium">{title}{required ? <span className="ml-1 text-clay">*</span> : null}</div>{children}</div>;
 }
