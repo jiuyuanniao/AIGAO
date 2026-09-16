@@ -8,3 +8,5 @@ if (!url || !publishableKey) {
 }
 
 export const supabase = createClient(url, publishableKey);
+
+// Netlify production rebuild after environment configuration refresh.
