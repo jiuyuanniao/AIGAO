@@ -5,6 +5,7 @@ import { OrderStatusBadge, Pill } from "@/components/site/common";
 import { formatCNY, getCreator, getOrder } from "@/lib/data";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
+import { actionErrorMessage } from "@/lib/action-errors";
 import type { OrderStatus } from "@/lib/types";
 
 type DbOrder = {
@@ -164,12 +165,17 @@ function OrderPage() {
     setWorking(true);
     setNotice("");
     const { error } = await supabase.rpc(name, args);
-    if (error) setNotice(error.message);
+    if (error) setNotice(actionErrorMessage(error));
     else {
       setNotice(success);
       await loadOrder();
     }
     setWorking(false);
+  }
+
+  async function cancelOrder() {
+    if (!order || !window.confirm("确定取消这笔订单吗？只有创作者接单前可以直接取消。")) return;
+    await runRpc("cancel_order", { p_order_id: order.id }, "订单已取消。");
   }
 
   async function submitDelivery() {
@@ -201,7 +207,7 @@ function OrderPage() {
       setNotice("交付版本已提交，等待需求方验收。");
       await loadOrder();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "交付失败");
+      setNotice(actionErrorMessage(error, "交付失败，请稍后重试。"));
     } finally {
       setWorking(false);
     }
@@ -216,7 +222,7 @@ function OrderPage() {
       message_type: "text",
       content: messageText.trim(),
     });
-    if (error) setNotice(error.message);
+    if (error) setNotice(actionErrorMessage(error, "留言发送失败，请稍后重试。"));
     else {
       setMessageText("");
       await loadOrder();
@@ -235,7 +241,7 @@ function OrderPage() {
       content: reviewText,
       tags: [],
     });
-    if (error) setNotice(error.message);
+    if (error) setNotice(actionErrorMessage(error, "评价提交失败，请稍后重试。"));
     else {
       setExistingReview(true);
       setNotice("评价已提交。");
@@ -246,8 +252,8 @@ function OrderPage() {
   if (mockOrder) {
     const mockCreator = getCreator(mockOrder.creator_id);
     return (
-      <div className="container-page py-10">
-        <div className="flex items-start justify-between gap-4">
+      <div className="container-page py-8 sm:py-10">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div><OrderStatusBadge status={mockOrder.status} /><h1 className="mt-3 font-display text-3xl font-semibold">{mockOrder.title}</h1></div>
           <div className="font-display text-2xl font-semibold">{formatCNY(mockOrder.amount)}</div>
         </div>
@@ -260,26 +266,63 @@ function OrderPage() {
   }
 
   if (authLoading || loading) return <div className="container-page py-20 text-center text-sm text-muted-foreground">正在加载订单…</div>;
-  if (!order) return <div className="container-page py-20 text-center">订单不存在，或你无权查看该订单。</div>;
+  if (!order) {
+    return (
+      <div className="container-page py-20">
+        <div className="card-surface mx-auto max-w-lg p-8 text-center">
+          <h1 className="font-display text-2xl font-semibold">没有找到这笔订单</h1>
+          <p className="mt-3 text-sm text-muted-foreground">订单不存在，或当前账号不是这笔订单的合作方。</p>
+          <Button className="mt-5" variant="outline" onClick={() => navigate({ to: "/me" })}>返回个人中心</Button>
+        </div>
+      </div>
+    );
+  }
 
   const scope = order.scope_snapshot ?? {};
-  const title = String(scope.request_title ?? "AIGAO 约稿订单");
+  const title = String(scope.request_title ?? scope.service_title ?? "AIGAO 约稿订单");
+
+  function renderReviewActions() {
+    if (!isClient || order.status !== "pending_review") return null;
+    return (
+      <div>
+        <div className="mb-3 text-sm font-medium">验收操作</div>
+        <Button className="w-full" disabled={working} onClick={() => runRpc("complete_order", { p_order_id: order.id }, "订单已确认完成。")}>确认完成</Button>
+        <textarea value={revisionFeedback} onChange={(e) => setRevisionFeedback(e.target.value)} className="mt-3 min-h-20 w-full rounded-lg border border-input bg-background p-3 text-sm" placeholder="如需修改，请写清楚具体修改意见" />
+        <Button variant="outline" className="mt-2 w-full" disabled={working || !revisionFeedback.trim() || order.revision_used >= order.revision_limit} onClick={() => runRpc("request_revision", { p_order_id: order.id, p_feedback: revisionFeedback }, "修改意见已提交。")}>申请修改</Button>
+        <div className="mt-2 text-xs text-muted-foreground">剩余修改次数：{Math.max(0, order.revision_limit - order.revision_used)}</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="container-page py-10">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2"><OrderStatusBadge status={order.status} /><span className="text-xs text-muted-foreground">{order.order_no}</span></div>
+    <div className="container-page py-8 sm:py-10">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2"><OrderStatusBadge status={order.status} /><span className="break-all text-xs text-muted-foreground">{order.order_no}</span></div>
           <h1 className="mt-3 font-display text-3xl font-semibold">{title}</h1>
         </div>
-        <div className="text-right"><div className="font-display text-2xl font-semibold">{formatCNY(Number(order.amount))}</div><div className="mt-1 text-xs text-muted-foreground">成交金额</div></div>
+        <div className="sm:text-right"><div className="font-display text-2xl font-semibold">{formatCNY(Number(order.amount))}</div><div className="mt-1 text-xs text-muted-foreground">成交金额</div></div>
       </div>
 
-      {notice ? <div className="mt-5 rounded-xl bg-secondary p-3 text-sm text-muted-foreground">{notice}</div> : null}
+      {notice ? <div className="mt-5 rounded-xl bg-secondary p-3 text-sm leading-6 text-muted-foreground">{notice}</div> : null}
+
+      {isClient && order.status === "pending_confirm" ? (
+        <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-medium">等待创作者确认接单</div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">创作者尚未开始制作。如果计划有变，现在可以直接取消订单。</p>
+          </div>
+          <Button variant="destructive" className="w-full sm:w-auto" disabled={working} onClick={cancelOrder}>取消订单</Button>
+        </div>
+      ) : null}
+
+      {order.status === "cancelled" ? (
+        <div className="mt-5 rounded-2xl bg-secondary p-4 text-sm leading-6 text-muted-foreground">这笔订单已经取消，不再进入制作与交付流程。</div>
+      ) : null}
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_320px]">
-        <div className="space-y-8">
-          <section className="card-surface p-6">
+        <div className="min-w-0 space-y-8">
+          <section className="card-surface p-5 sm:p-6">
             <h2 className="font-medium">订单约定</h2>
             <div className="mt-4 grid gap-4 text-sm md:grid-cols-2">
               <Info label="交付范围" value={String(scope.description ?? scope.proposal ?? "按需求与应征方案执行")} />
@@ -290,20 +333,24 @@ function OrderPage() {
           </section>
 
           {isCreator && order.status === "pending_confirm" ? (
-            <section className="card-surface p-6">
+            <section className="card-surface p-5 sm:p-6">
               <h2 className="font-medium">确认接单</h2>
-              <p className="mt-2 text-sm text-muted-foreground">确认后订单进入制作中，并开始按约定截止日期履约。</p>
-              <Button className="mt-4" disabled={working} onClick={() => runRpc("accept_order", { p_order_id: order.id }, "已接单，订单进入制作中。")}>确认接单</Button>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">确认后订单进入制作中，并开始按约定截止日期履约。</p>
+              <Button className="mt-4 w-full sm:w-auto" disabled={working} onClick={() => runRpc("accept_order", { p_order_id: order.id }, "已接单，订单进入制作中。")}>确认接单</Button>
             </section>
           ) : null}
 
+          {isClient && order.status === "pending_review" ? (
+            <section className="card-surface p-5 lg:hidden">{renderReviewActions()}</section>
+          ) : null}
+
           {isCreator && (order.status === "in_progress" || order.status === "revision_required") ? (
-            <section className="card-surface p-6">
+            <section className="card-surface p-5 sm:p-6">
               <h2 className="font-medium">{order.status === "revision_required" ? "提交修改版本" : "提交交付版本"}</h2>
               <textarea value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} className="mt-4 min-h-24 w-full rounded-xl border border-input bg-background p-3 text-sm" placeholder="说明这一版完成了什么…" />
-              <input className="mt-3 block w-full text-sm" type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
-              <div className="mt-2 text-xs text-muted-foreground">已选择 {files.length} 个文件。文件会进入订单私有空间，仅合作双方可访问。</div>
-              <Button className="mt-4" disabled={working || files.length === 0} onClick={submitDelivery}>{working ? "上传中…" : "提交这一版"}</Button>
+              <input className="mt-3 block w-full max-w-full text-sm" type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+              <div className="mt-2 text-xs leading-5 text-muted-foreground">已选择 {files.length} 个文件。文件会进入订单私有空间，仅合作双方可访问。</div>
+              <Button className="mt-4 w-full sm:w-auto" disabled={working || files.length === 0} onClick={submitDelivery}>{working ? "上传中…" : "提交这一版"}</Button>
             </section>
           ) : null}
 
@@ -311,12 +358,12 @@ function OrderPage() {
             <h2 className="font-display text-2xl font-semibold">交付版本</h2>
             <div className="mt-5 space-y-4">
               {deliveries.map((d) => (
-                <div key={d.id} className="card-surface p-5">
-                  <div className="flex justify-between"><div className="font-medium">V{d.version_no}</div><div className="text-xs text-muted-foreground">{new Date(d.created_at).toLocaleString("zh-CN")}</div></div>
-                  {d.note ? <p className="mt-2 text-sm text-muted-foreground">{d.note}</p> : null}
+                <div key={d.id} className="card-surface p-4 sm:p-5">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:justify-between"><div className="font-medium">V{d.version_no}</div><div className="text-xs text-muted-foreground">{new Date(d.created_at).toLocaleString("zh-CN")}</div></div>
+                  {d.note ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{d.note}</p> : null}
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     {d.signed_files.map((f) => (
-                      <a key={f.path} href={f.url ?? "#"} target="_blank" rel="noreferrer" className="rounded-xl border border-border p-3 text-sm hover:bg-secondary">
+                      <a key={f.path} href={f.url ?? "#"} target="_blank" rel="noreferrer" className="min-w-0 rounded-xl border border-border p-3 text-sm hover:bg-secondary">
                         <div className="truncate font-medium">{f.name}</div>
                         <div className="mt-1 text-xs text-muted-foreground">{f.url ? "点击预览 / 下载" : "暂时无法生成访问链接"}</div>
                       </a>
@@ -324,29 +371,32 @@ function OrderPage() {
                   </div>
                 </div>
               ))}
-              {deliveries.length === 0 ? <div className="card-surface p-8 text-center text-sm text-muted-foreground">暂时还没有交付版本。</div> : null}
+              {deliveries.length === 0 ? <div className="card-surface p-8 text-center text-sm leading-6 text-muted-foreground">暂时还没有交付版本。创作者提交第一版后会显示在这里。</div> : null}
             </div>
           </section>
 
           <section>
             <h2 className="font-display text-2xl font-semibold">订单留言</h2>
-            <div className="mt-5 card-surface divide-y divide-border">
+            <div className="mt-5 card-surface divide-y divide-border overflow-hidden">
               {messages.map((m) => (
                 <div key={m.id} className="p-4">
                   <div className="text-xs text-muted-foreground">{m.sender_id === user?.id ? "我" : m.sender_id === client?.user_id ? client?.display_name : creator?.display_name} · {new Date(m.created_at).toLocaleString("zh-CN")}</div>
-                  <div className="mt-1.5 text-sm">{m.content}</div>
+                  <div className="mt-1.5 break-words text-sm leading-6">{m.content}</div>
                   {m.message_type === "revision" ? <div className="mt-2"><Pill tone="clay">正式修改意见</Pill></div> : null}
                 </div>
               ))}
-              <div className="p-4">
-                <textarea value={messageText} onChange={(e) => setMessageText(e.target.value)} className="min-h-20 w-full rounded-lg border border-input bg-background p-3 text-sm" placeholder="写一条订单留言…" />
-                <Button className="mt-2" disabled={working || !messageText.trim()} onClick={sendMessage}>发送</Button>
-              </div>
+              {messages.length === 0 ? <div className="p-5 text-center text-sm text-muted-foreground">还没有留言，可以在下面直接沟通订单细节。</div> : null}
+              {order.status !== "cancelled" ? (
+                <div className="p-4">
+                  <textarea value={messageText} onChange={(e) => setMessageText(e.target.value)} className="min-h-20 w-full rounded-lg border border-input bg-background p-3 text-sm" placeholder="写一条订单留言…" />
+                  <Button className="mt-2 w-full sm:w-auto" disabled={working || !messageText.trim()} onClick={sendMessage}>发送</Button>
+                </div>
+              ) : null}
             </div>
           </section>
 
           {isClient && order.status === "completed" && !existingReview ? (
-            <section className="card-surface p-6">
+            <section className="card-surface p-5 sm:p-6">
               <h2 className="font-medium">评价这次合作</h2>
               <div className="mt-4 flex items-center gap-3">
                 <span className="text-sm">评分</span>
@@ -355,13 +405,13 @@ function OrderPage() {
                 </select>
               </div>
               <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} className="mt-3 min-h-24 w-full rounded-xl border border-input bg-background p-3 text-sm" placeholder="说说质量、沟通、交付体验…" />
-              <Button className="mt-3" disabled={working} onClick={submitReview}>提交评价</Button>
+              <Button className="mt-3 w-full sm:w-auto" disabled={working} onClick={submitReview}>提交评价</Button>
             </section>
           ) : null}
         </div>
 
         <aside>
-          <div className="card-surface sticky top-24 p-5">
+          <div className="card-surface lg:sticky lg:top-24 p-5">
             <div className="font-medium">合作双方</div>
             <div className="mt-4 space-y-4 text-sm">
               <Party label="需求方" party={client} />
@@ -369,13 +419,7 @@ function OrderPage() {
             </div>
 
             {isClient && order.status === "pending_review" ? (
-              <div className="mt-5 border-t border-border pt-5">
-                <div className="mb-3 text-sm font-medium">验收操作</div>
-                <Button className="w-full" disabled={working} onClick={() => runRpc("complete_order", { p_order_id: order.id }, "订单已确认完成。")}>确认完成</Button>
-                <textarea value={revisionFeedback} onChange={(e) => setRevisionFeedback(e.target.value)} className="mt-3 min-h-20 w-full rounded-lg border border-input bg-background p-3 text-sm" placeholder="如需修改，请写清楚具体修改意见" />
-                <Button variant="outline" className="mt-2 w-full" disabled={working || !revisionFeedback.trim() || order.revision_used >= order.revision_limit} onClick={() => runRpc("request_revision", { p_order_id: order.id, p_feedback: revisionFeedback }, "修改意见已提交。")}>申请修改</Button>
-                <div className="mt-2 text-xs text-muted-foreground">剩余修改次数：{Math.max(0, order.revision_limit - order.revision_used)}</div>
-              </div>
+              <div className="mt-5 hidden border-t border-border pt-5 lg:block">{renderReviewActions()}</div>
             ) : null}
 
             <div className="mt-5 flex flex-wrap gap-2"><Pill tone="muted">版本留痕</Pill><Pill tone="muted">订单快照</Pill><Pill tone="muted">修改次数记录</Pill></div>
@@ -387,9 +431,9 @@ function OrderPage() {
 }
 
 function Party({ label, party }: { label: string; party: PartyProfile | null }) {
-  return <div><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 font-medium">{party?.display_name ?? "加载中…"}</div>{party?.headline ? <div className="mt-1 text-xs text-muted-foreground">{party.headline}</div> : null}</div>;
+  return <div><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 font-medium">{party?.display_name ?? "加载中…"}</div>{party?.headline ? <div className="mt-1 text-xs leading-5 text-muted-foreground">{party.headline}</div> : null}</div>;
 }
 
 function Info({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 leading-6">{value}</div></div>;
+  return <div><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 break-words leading-6">{value}</div></div>;
 }
