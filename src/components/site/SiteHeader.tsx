@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import { Search, Menu } from "lucide-react";
+import { Search, Menu, LogOut } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { currentUser } from "@/lib/data";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { supabase } from "@/lib/supabase";
 
 const NAV = [
   { to: "/", label: "首页" },
@@ -16,6 +17,11 @@ const NAV = [
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
+  const { user, loading } = useAuth();
+
+  async function signOut() {
+    await supabase.auth.signOut();
+  }
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/85 backdrop-blur-md">
@@ -49,15 +55,24 @@ export function SiteHeader() {
             <Search className="size-4" />
             搜索服务、创作者、作品
           </Link>
+
           <Button asChild size="sm" className="rounded-full">
-            <Link to="/requests/new">发布需求</Link>
+            <Link to={user ? "/requests/new" : "/auth"}>{user ? "发布需求" : "登录 / 注册"}</Link>
           </Button>
-          <Link to="/me" className="ml-1 hidden md:block">
-            <Avatar className="size-9 border border-border">
-              <AvatarImage src={currentUser.avatar_url} alt={currentUser.name} />
-              <AvatarFallback>我</AvatarFallback>
-            </Avatar>
-          </Link>
+
+          {!loading && user ? (
+            <>
+              <Link to="/me" className="ml-1 hidden md:block" title={user.email ?? "我的"}>
+                <Avatar className="size-9 border border-border">
+                  <AvatarFallback>{(user.email?.[0] ?? "我").toUpperCase()}</AvatarFallback>
+                </Avatar>
+              </Link>
+              <Button variant="ghost" size="icon" className="hidden md:inline-flex" onClick={signOut} title="退出登录">
+                <LogOut className="size-4" />
+              </Button>
+            </>
+          ) : null}
+
           <Button
             variant="ghost"
             size="icon"
@@ -72,7 +87,7 @@ export function SiteHeader() {
 
       <div className={cn("border-t border-border md:hidden", open ? "block" : "hidden")}>
         <nav className="container-page flex flex-col py-2">
-          {[...NAV, { to: "/me", label: "我的" } as const].map((item) => (
+          {NAV.map((item) => (
             <Link
               key={item.to}
               to={item.to}
@@ -83,6 +98,13 @@ export function SiteHeader() {
               {item.label}
             </Link>
           ))}
+          <Link
+            to={user ? "/me" : "/auth"}
+            onClick={() => setOpen(false)}
+            className="py-2.5 text-sm text-muted-foreground"
+          >
+            {user ? "我的" : "登录 / 注册"}
+          </Link>
         </nav>
       </div>
     </header>
