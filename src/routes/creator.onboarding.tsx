@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
+import { actionErrorMessage } from "@/lib/action-errors";
 
 export const Route = createFileRoute("/creator/onboarding")({ component: CreatorOnboardingPage });
 
@@ -112,7 +113,7 @@ function CreatorOnboardingPage() {
       setMessage("创作者主页已发布。");
       navigate({ to: "/me" });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存失败，请稍后再试");
+      setMessage(actionErrorMessage(error, "保存失败，请稍后再试。"));
     } finally {
       setSaving(false);
     }
@@ -123,7 +124,7 @@ function CreatorOnboardingPage() {
   }
 
   return (
-    <div className="container-page py-10">
+    <div className="container-page py-8 sm:py-10">
       <div className="max-w-3xl">
         <h1 className="font-display text-3xl font-semibold">{creator ? "编辑创作者主页" : "成为 AI 创作者"}</h1>
         <p className="mt-2 text-sm text-muted-foreground">先建立最基础的公开主页，就可以进入需求大厅应征项目。</p>
@@ -163,7 +164,7 @@ function CreatorOnboardingPage() {
           {message ? <div className="rounded-xl bg-secondary p-3 text-sm text-muted-foreground">{message}</div> : null}
 
           <div className="flex justify-end border-t border-border pt-5">
-            <Button type="submit" disabled={saving}>{saving ? "保存中…" : creator ? "保存主页" : "发布创作者主页"}</Button>
+            <Button type="submit" className="w-full sm:w-auto" disabled={saving}>{saving ? "保存中…" : creator ? "保存主页" : "发布创作者主页"}</Button>
           </div>
         </form>
       </div>
@@ -172,5 +173,5 @@ function CreatorOnboardingPage() {
 }
 
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="card-surface p-5"><div className="mb-3 text-sm font-medium">{title}</div>{children}</section>;
+  return <section className="card-surface p-4 sm:p-5"><div className="mb-3 text-sm font-medium">{title}</div>{children}</section>;
 }
